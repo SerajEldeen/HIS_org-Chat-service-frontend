@@ -207,7 +207,7 @@ const DepartmentChat = () => {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <section className="flex flex-col h-full">
       {/* Chat Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.map((message) => (
@@ -363,7 +363,7 @@ const DepartmentChat = () => {
           className="hidden"
         />
       </div>
-    </div>
+    </section>
   );
 };
 

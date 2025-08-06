@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useState, useRef } from "react";
 
-interface User {
+interface Group {
   id: number;
   name: string;
   lastMessage: string;
@@ -23,79 +23,50 @@ interface Message {
   voiceUrl?: string;
   voiceDuration?: number;
 }
-
-const PrivateChat = () => {
-  const [users] = useState<User[]>([
+function GroupChat() {
+  const [groups] = useState<Group[]>([
     {
       id: 1,
-      name: "Moller Magdy",
-      lastMessage: "Lorem ipsum dolor sit amet...",
-      timestamp: "1 day ago",
-      avatar: "MM",
+      name: "Cardiology Team",
+      lastMessage: "Meeting at 10 AM tomorrow",
+      timestamp: "1 hour ago",
+      avatar: "CT",
       isOnline: true,
     },
     {
       id: 2,
-      name: "Moller Magdy",
-      lastMessage: "Lorem ipsum dolor sit amet...",
-      timestamp: "1 day ago",
-      avatar: "MM",
+      name: "Radiology Dept",
+      lastMessage: "Review X-ray cases today",
+      timestamp: "3 hours ago",
+      avatar: "RD",
       isOnline: false,
     },
     {
       id: 3,
-      name: "Moller Magdy",
-      lastMessage: "Lorem ipsum dolor sit amet...",
-      timestamp: "1 day ago",
-      avatar: "MM",
-      isOnline: true,
-    },
-    {
-      id: 4,
-      name: "Moller Magdy",
-      lastMessage: "Lorem ipsum dolor sit amet...",
-      timestamp: "1 day ago",
-      avatar: "MM",
-      isOnline: false,
-    },
-    {
-      id: 5,
-      name: "Moller Magdy",
-      lastMessage: "Lorem ipsum dolor sit amet...",
-      timestamp: "1 day ago",
-      avatar: "MM",
+      name: "Emergency Unit",
+      lastMessage: "Patient admitted at 4 PM",
+      timestamp: "Yesterday",
+      avatar: "EU",
       isOnline: true,
     },
   ]);
 
-  const [selectedUser, setSelectedUser] = useState<User | null>();
-  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedGroup, setSelectedGroup] = useState<Group | null>();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 1,
-      sender: "Doctor Name",
-      content:
-        "Quisque ac ante vel eros tempor faucibus. View the discharge summary in the patient records.",
-      timestamp: "4 days ago",
+      sender: "Dr. Sarah",
+      content: "Please check the patient in Room 203.",
+      timestamp: "2 hours ago",
       isOwn: false,
       type: "text",
     },
     {
       id: 2,
       sender: "You",
-      content:
-        "Quisque ac ante vel eros tempor faucibus. View the discharge summary in the patient records.",
-      timestamp: "4 days ago",
+      content: "On it, thanks for the update!",
+      timestamp: "1 hour ago",
       isOwn: true,
-      type: "text",
-    },
-    {
-      id: 3,
-      sender: "Doctor Name",
-      content:
-        "Quisque ac ante vel eros tempor faucibus. View the discharge summary in the patient records.",
-      timestamp: "4 days ago",
-      isOwn: false,
       type: "text",
     },
   ]);
@@ -106,9 +77,7 @@ const PrivateChat = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const filteredUsers = users.filter((user) =>
-    user.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredGroups = groups.filter((group) => group.name.toLowerCase());
 
   const handleSendMessage = () => {
     if (newMessage.trim()) {
@@ -262,65 +231,40 @@ const PrivateChat = () => {
 
   return (
     <section className="flex h-full">
-      {/* User List */}
+      {/* Group List */}
       <div className="w-1/3 border-r border-gray-200 flex flex-col">
-        {/* Search Bar */}
-        <div className="p-4 border-b border-gray-200">
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search for Name"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full px-3 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <svg
-                className="h-5 w-5 text-gray-400"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                />
-              </svg>
-            </div>
-          </div>
-        </div>
-        {/* User List */}
+        {/* Group List */}
         <div className="flex-1 overflow-y-auto">
-          {filteredUsers.map((user) => (
+          {filteredGroups.map((group) => (
             <div
-              key={user.id}
-              onClick={() => setSelectedUser(user)}
+              key={group.id}
+              onClick={() => setSelectedGroup(group)}
               className={`p-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors ${
-                selectedUser?.id === user.id ? "bg-blue-50 border-blue-200" : ""
+                selectedGroup?.id === group.id
+                  ? "bg-blue-50 border-blue-200"
+                  : ""
               }`}
             >
               <div className="flex items-center space-x-3">
                 <div className="relative">
                   <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
                     <span className="text-white text-sm font-medium">
-                      {user.avatar}
+                      {group.avatar}
                     </span>
                   </div>
-                  {user.isOnline && (
+                  {group.isOnline && (
                     <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-medium text-gray-900 truncate">
-                      {user.name}
+                      {group.name}
                     </p>
-                    <p className="text-xs text-gray-500">{user.timestamp}</p>
+                    <p className="text-xs text-gray-500">{group.timestamp}</p>
                   </div>
                   <p className="text-sm text-gray-500 truncate">
-                    {user.lastMessage}
+                    {group.lastMessage}
                   </p>
                 </div>
               </div>
@@ -330,7 +274,7 @@ const PrivateChat = () => {
       </div>
       {/* Chat Area */}
       <div className="flex-1 flex flex-col">
-        {selectedUser ? (
+        {selectedGroup ? (
           <>
             {/* Chat Header */}
             <div className="p-4 border-b border-gray-200 bg-white">
@@ -338,19 +282,19 @@ const PrivateChat = () => {
                 <div className="relative">
                   <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
                     <span className="text-white text-sm font-medium">
-                      {selectedUser.avatar}
+                      {selectedGroup.avatar}
                     </span>
                   </div>
-                  {selectedUser.isOnline && (
+                  {selectedGroup.isOnline && (
                     <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
                   )}
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold text-gray-800">
-                    {selectedUser.name}
+                    {selectedGroup.name}
                   </h3>
                   <p className="text-sm text-gray-500">
-                    {selectedUser.isOnline ? "Online" : "Offline"}
+                    {selectedGroup.isOnline ? "Online" : "Offline"}
                   </p>
                 </div>
               </div>
@@ -517,12 +461,12 @@ const PrivateChat = () => {
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center">
-            <p className="text-gray-500">Select a user to start chatting</p>
+            <p className="text-gray-500">Select a group to start chatting</p>
           </div>
         )}
       </div>
     </section>
   );
-};
+}
 
-export default PrivateChat;
+export default GroupChat;

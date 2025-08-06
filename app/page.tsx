@@ -3,11 +3,12 @@
 import { useState } from "react";
 import DepartmentChat from "@/components/DepartmentChat";
 import PrivateChat from "@/components/PrivateChat";
+import GroupChat from "@/components/GroupChat";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"department" | "private">(
-    "department"
-  );
+  const [activeTab, setActiveTab] = useState<
+    "department" | "private" | "group"
+  >("department");
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -45,12 +46,30 @@ export default function Home() {
             >
               Private
             </button>
+
+            {/* Group Tab */}
+            <button
+              onClick={() => setActiveTab("group")}
+              className={`px-4 py-2 text-sm font-medium transition-colors -mb-[1px] border-b-2 ${
+                activeTab === "group"
+                  ? "text-blue-600 border-blue-600"
+                  : "text-gray-600 border-transparent hover:text-gray-800 "
+              }`}
+            >
+              Group
+            </button>
           </div>
         </div>
 
         {/* Chat Content */}
         <div className="h-[600px]">
-          {activeTab === "department" ? <DepartmentChat /> : <PrivateChat />}
+          {activeTab === "department" ? (
+            <DepartmentChat />
+          ) : activeTab === "private" ? (
+            <PrivateChat />
+          ) : (
+            <GroupChat />
+          )}
         </div>
       </div>
     </div>
