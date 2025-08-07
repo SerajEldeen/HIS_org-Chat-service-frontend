@@ -1,15 +1,31 @@
 "use client";
-
+import { useSocket } from "@/hooks/useSocket";
 import Image from "next/image";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { getLoggedInUserName } from "@/utils/auth";
 
-interface User {
-  id: number;
+interface Member {
+  id: string;
+  usr_name: string;
+  full_name?: string;
+  usr_id?: number;
+  department_id?: number;
+  chat_enabled?: boolean;
+  is_high_managerial?: boolean;
+  isOnline?: boolean;
+  lastSeen?: string | null;
+}
+interface Room {
+  id: string;
   name: string;
-  lastMessage: string;
-  timestamp: string;
-  avatar: string;
-  isOnline: boolean;
+  roomType: string;
+  members: Member[];
+}
+
+interface ApiResponse {
+  status: boolean;
+  message: string;
+  data: Room[];
 }
 
 interface Message {
@@ -25,104 +41,236 @@ interface Message {
 }
 
 const PrivateChat = () => {
-  const [users] = useState<User[]>([
-    {
-      id: 1,
-      name: "Moller Magdy",
-      lastMessage: "Lorem ipsum dolor sit amet...",
-      timestamp: "1 day ago",
-      avatar: "MM",
-      isOnline: true,
-    },
-    {
-      id: 2,
-      name: "Moller Magdy",
-      lastMessage: "Lorem ipsum dolor sit amet...",
-      timestamp: "1 day ago",
-      avatar: "MM",
-      isOnline: false,
-    },
-    {
-      id: 3,
-      name: "Moller Magdy",
-      lastMessage: "Lorem ipsum dolor sit amet...",
-      timestamp: "1 day ago",
-      avatar: "MM",
-      isOnline: true,
-    },
-    {
-      id: 4,
-      name: "Moller Magdy",
-      lastMessage: "Lorem ipsum dolor sit amet...",
-      timestamp: "1 day ago",
-      avatar: "MM",
-      isOnline: false,
-    },
-    {
-      id: 5,
-      name: "Moller Magdy",
-      lastMessage: "Lorem ipsum dolor sit amet...",
-      timestamp: "1 day ago",
-      avatar: "MM",
-      isOnline: true,
-    },
-  ]);
-
-  const [selectedUser, setSelectedUser] = useState<User | null>();
+  const socket = useSocket();
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [selectedUser, setSelectedUser] = useState<Member | null>(null);
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 1,
-      sender: "Doctor Name",
-      content:
-        "Quisque ac ante vel eros tempor faucibus. View the discharge summary in the patient records.",
-      timestamp: "4 days ago",
-      isOwn: false,
-      type: "text",
-    },
-    {
-      id: 2,
-      sender: "You",
-      content:
-        "Quisque ac ante vel eros tempor faucibus. View the discharge summary in the patient records.",
-      timestamp: "4 days ago",
-      isOwn: true,
-      type: "text",
-    },
-    {
-      id: 3,
-      sender: "Doctor Name",
-      content:
-        "Quisque ac ante vel eros tempor faucibus. View the discharge summary in the patient records.",
-      timestamp: "4 days ago",
-      isOwn: false,
-      type: "text",
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+
+  // const [invitationEmail, setInvitationEmail] = useState("");
+  // const [isInvitationLoading, setIsInvitationLoading] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const filteredUsers = users.filter((user) =>
-    user.name.toLowerCase().includes(searchQuery.toLowerCase())
+  const loggedInUsername = getLoggedInUserName();
+  console.log(messages);
+
+  // STEP 1: Get the token
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      console.error("No token found, redirect to login");
+      return;
+    }
+
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/rooms/private`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch private rooms");
+        return res.json();
+      })
+      .then((data: ApiResponse) => {
+        setRooms(data.data);
+
+        // Extract all members from all rooms into a single array (remove duplicates if needed)
+        const allMembers = data.data.flatMap((room) => room.members);
+        const uniqueMembers = Array.from(
+          new Map(allMembers.map((m) => [m.id, m])).values()
+        );
+        setMembers(uniqueMembers);
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+  }, []);
+
+  // STEP 2: Socket Event Listeners for Real-time Updates
+  useEffect(() => {
+    if (!socket) return;
+
+    // Listen for new messages
+    socket.on("receiveMessage", (messageData: any) => {
+      console.log("New message received:", messageData);
+      // Check if message belongs to current room
+      if (messageData.room_id === selectedRoomId) {
+        const newMessage: Message = {
+          id: messageData.id,
+          sender: messageData.sender,
+          content: messageData.content,
+          timestamp: messageData.timestamp,
+          isOwn: messageData.sender_id === loggedInUsername,
+          type: messageData.media ? "image" : "text",
+        };
+
+        setMessages((prev) => [...prev, newMessage]);
+      }
+    });
+    // Cleanup listeners
+    return () => {
+      socket.off("receiveMessage");
+    };
+  }, [socket, selectedRoomId, loggedInUsername]);
+
+  // STEP 3: Fetch messages when selectedRoomId changes
+  useEffect(() => {
+    if (!selectedRoomId) {
+      setMessages([]);
+      return;
+    }
+
+    const token = localStorage.getItem("token");
+    if (!token) {
+      console.error("No token found, redirect to login");
+      return;
+    }
+
+    fetch(
+      `${process.env.NEXT_PUBLIC_API_URL}/rooms/${selectedRoomId}/messages`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    )
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch messages");
+        return res.json();
+      })
+      .then((data: { status: boolean; message: string; data: any[] }) => {
+        // Map API messages to Message interface
+        const mappedMessages: Message[] = data.data.map((msg) => {
+          // Extract sender name safely
+          const senderName =
+            typeof msg.sender === "string"
+              ? msg.sender
+              : msg.sender?.usr_name || msg.sender?.username || "Unknown";
+
+          return {
+            id: msg.id,
+            sender: senderName,
+            content: msg.content,
+            timestamp: msg.timestamp,
+            isOwn: senderName === loggedInUsername,
+            type: msg.type || "text",
+            imageUrl: msg.imageUrl,
+            voiceUrl: msg.voiceUrl,
+            voiceDuration: msg.voiceDuration,
+          };
+        });
+
+        setMessages(mappedMessages);
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+  }, [selectedRoomId, loggedInUsername]);
+
+  // Function to handle sending invitation
+  const handleSendInvitation = async () => {
+    if (!invitationEmail.trim()) {
+      alert("Please enter an email address");
+      return;
+    }
+
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailPattern.test(invitationEmail)) {
+      alert("Please enter a valid email address");
+      return;
+    }
+
+    const token = localStorage.getItem("token");
+    if (!token) {
+      alert("Authentication required");
+      return;
+    }
+
+    setIsInvitationLoading(true);
+
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/invitations/send`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            email: invitationEmail,
+            type: "chat_invitation",
+          }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (response.ok && result.status) {
+        alert("Invitation sent successfully!");
+        setInvitationEmail("");
+      } else {
+        alert(result.message || "Failed to send invitation");
+      }
+    } catch (error) {
+      console.error("Error sending invitation:", error);
+      alert("Error sending invitation. Please try again.");
+    } finally {
+      setIsInvitationLoading(false);
+    }
+  };
+
+  // When user selects a member, find their private room and fetch messages
+  const onSelectUser = (user: Member) => {
+    setSelectedUser(user);
+
+    // Find room with this user in members array (private room)
+    const room = rooms.find((room) =>
+      room.members.some((m) => m.id === user.id)
+    );
+
+    if (room) {
+      setSelectedRoomId(room.id);
+    } else {
+      console.warn("No private room found for selected user");
+      setSelectedRoomId(null);
+      setMessages([]);
+    }
+  };
+
+  const filteredMembers = members.filter(
+    (user) =>
+      user.usr_name.toLowerCase() !== loggedInUsername.toLowerCase() &&
+      user.usr_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // console.log(filteredMembers);
+
   const handleSendMessage = () => {
-    if (newMessage.trim()) {
-      const message: Message = {
-        id: messages.length + 1,
-        sender: "You",
-        content: newMessage,
-        timestamp: "now",
-        isOwn: true,
-        type: "text",
-      };
-      setMessages([...messages, message]);
-      setNewMessage("");
-    }
+    if (!newMessage.trim() || !selectedRoomId || !socket || !loggedInUsername)
+      return;
+    const messageData = {
+      roomId: selectedRoomId,
+      content: newMessage,
+      sender_name: loggedInUsername,
+      timestamp: new Date().toISOString(),
+    };
+    socket.emit("sendMessage", messageData);
+    console.log("Message sent via socket:", messageData);
+    const optimisticMessage: Message = {
+      id: messages.length + 1,
+      sender: loggedInUsername,
+      content: newMessage,
+      timestamp: "now",
+      isOwn: true,
+      type: "text",
+    };
+    setMessages((prev) => [...prev, optimisticMessage]);
+    setNewMessage("");
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -144,7 +292,7 @@ const PrivateChat = () => {
         type: "image",
         imageUrl: imageUrl,
       };
-      setMessages([...messages, message]);
+      setMessages((prev) => [...prev, message]);
     }
   };
 
@@ -264,6 +412,37 @@ const PrivateChat = () => {
     <section className="flex h-full">
       {/* User List */}
       <div className="w-1/3 border-r border-gray-200 flex flex-col">
+        {/* Send Invitation Section */}
+        {/* <div className="p-4 border-b border-gray-200 bg-gray-50">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">
+            Send Invitation
+          </h3>
+          <div className="flex space-x-2">
+            <input
+              type="email"
+              placeholder="Enter user_name"
+              value={invitationEmail}
+              onChange={(e) => setInvitationEmail(e.target.value)}
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              disabled={isInvitationLoading}
+            />
+            <button
+              onClick={handleSendInvitation}
+              disabled={isInvitationLoading || !invitationEmail.trim()}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+            >
+              {isInvitationLoading ? (
+                <div className="flex items-center space-x-1">
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span>Sending...</span>
+                </div>
+              ) : (
+                "Send"
+              )}
+            </button>
+          </div>
+        </div> */}
+
         {/* Search Bar */}
         <div className="p-4 border-b border-gray-200">
           <div className="relative">
@@ -275,6 +454,7 @@ const PrivateChat = () => {
               className="w-full px-3 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              {/* search icon */}
               <svg
                 className="h-5 w-5 text-gray-400"
                 fill="none"
@@ -291,12 +471,13 @@ const PrivateChat = () => {
             </div>
           </div>
         </div>
+
         {/* User List */}
         <div className="flex-1 overflow-y-auto">
-          {filteredUsers.map((user) => (
+          {filteredMembers.map((user) => (
             <div
               key={user.id}
-              onClick={() => setSelectedUser(user)}
+              onClick={() => onSelectUser(user)}
               className={`p-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors ${
                 selectedUser?.id === user.id ? "bg-blue-50 border-blue-200" : ""
               }`}
@@ -305,7 +486,7 @@ const PrivateChat = () => {
                 <div className="relative">
                   <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
                     <span className="text-white text-sm font-medium">
-                      {user.avatar}
+                      {user.usr_name.charAt(0).toUpperCase()}
                     </span>
                   </div>
                   {user.isOnline && (
@@ -315,19 +496,17 @@ const PrivateChat = () => {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-medium text-gray-900 truncate">
-                      {user.name}
+                      {user.usr_name}
                     </p>
-                    <p className="text-xs text-gray-500">{user.timestamp}</p>
+                    <p className="text-xs text-gray-500">{user.lastSeen}</p>
                   </div>
-                  <p className="text-sm text-gray-500 truncate">
-                    {user.lastMessage}
-                  </p>
                 </div>
               </div>
             </div>
           ))}
         </div>
       </div>
+
       {/* Chat Area */}
       <div className="flex-1 flex flex-col">
         {selectedUser ? (
@@ -338,7 +517,7 @@ const PrivateChat = () => {
                 <div className="relative">
                   <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
                     <span className="text-white text-sm font-medium">
-                      {selectedUser.avatar}
+                      {selectedUser.usr_name.charAt(0).toUpperCase()}
                     </span>
                   </div>
                   {selectedUser.isOnline && (
@@ -347,7 +526,7 @@ const PrivateChat = () => {
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold text-gray-800">
-                    {selectedUser.name}
+                    {selectedUser.usr_name}
                   </h3>
                   <p className="text-sm text-gray-500">
                     {selectedUser.isOnline ? "Online" : "Offline"}
@@ -357,7 +536,7 @@ const PrivateChat = () => {
             </div>
 
             {/* Chat Messages */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 ">
               {messages.map((message) => (
                 <div
                   key={message.id}
@@ -370,7 +549,7 @@ const PrivateChat = () => {
                       <div className="flex-shrink-0">
                         <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
                           <span className="text-white text-sm font-medium">
-                            {message.sender.charAt(0)}
+                            {message.sender.charAt(0).toUpperCase()}
                           </span>
                         </div>
                       </div>

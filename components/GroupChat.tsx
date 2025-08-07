@@ -1,15 +1,36 @@
 "use client";
-
+import { useSocket } from "@/hooks/useSocket";
 import Image from "next/image";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { getLoggedInUserName } from "@/utils/auth";
+
+interface Member {
+  id: string;
+  usr_name: string;
+  full_name?: string;
+  usr_id?: number;
+  department_id?: number;
+  chat_enabled?: boolean;
+  is_high_managerial?: boolean;
+  isOnline?: boolean;
+  lastSeen?: string | null;
+}
 
 interface Group {
-  id: number;
+  id: string;
   name: string;
-  lastMessage: string;
-  timestamp: string;
-  avatar: string;
-  isOnline: boolean;
+  roomType: string;
+  members: Member[];
+  lastMessage?: string;
+  timestamp?: string;
+  avatar?: string;
+  isOnline?: boolean;
+}
+
+interface ApiResponse {
+  status: boolean;
+  message: string;
+  data: Group[];
 }
 
 interface Message {
@@ -23,75 +44,174 @@ interface Message {
   voiceUrl?: string;
   voiceDuration?: number;
 }
-function GroupChat() {
-  const [groups] = useState<Group[]>([
-    {
-      id: 1,
-      name: "Cardiology Team",
-      lastMessage: "Meeting at 10 AM tomorrow",
-      timestamp: "1 hour ago",
-      avatar: "CT",
-      isOnline: true,
-    },
-    {
-      id: 2,
-      name: "Radiology Dept",
-      lastMessage: "Review X-ray cases today",
-      timestamp: "3 hours ago",
-      avatar: "RD",
-      isOnline: false,
-    },
-    {
-      id: 3,
-      name: "Emergency Unit",
-      lastMessage: "Patient admitted at 4 PM",
-      timestamp: "Yesterday",
-      avatar: "EU",
-      isOnline: true,
-    },
-  ]);
 
-  const [selectedGroup, setSelectedGroup] = useState<Group | null>();
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 1,
-      sender: "Dr. Sarah",
-      content: "Please check the patient in Room 203.",
-      timestamp: "2 hours ago",
-      isOwn: false,
-      type: "text",
-    },
-    {
-      id: 2,
-      sender: "You",
-      content: "On it, thanks for the update!",
-      timestamp: "1 hour ago",
-      isOwn: true,
-      type: "text",
-    },
-  ]);
+const GroupChat = () => {
+  const socket = useSocket();
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const filteredGroups = groups.filter((group) => group.name.toLowerCase());
+  const loggedInUsername = getLoggedInUserName();
+  console.log(messages);
+
+  // STEP 1: Get the token and fetch group rooms
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      console.error("No token found, redirect to login");
+      return;
+    }
+
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/rooms/group`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch group rooms");
+        return res.json();
+      })
+      .then((data: ApiResponse) => {
+        setGroups(data.data);
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+  }, []);
+
+  // STEP 2: Socket Event Listeners for Real-time Updates
+  useEffect(() => {
+    if (!socket) return;
+
+    // Listen for new messages
+    socket.on("receiveMessage", (messageData: any) => {
+      console.log("New message received:", messageData);
+      // Check if message belongs to current room
+      if (messageData.room_id === selectedRoomId) {
+        const newMessage: Message = {
+          id: messageData.id,
+          sender: messageData.sender,
+          content: messageData.content,
+          timestamp: messageData.timestamp,
+          isOwn: messageData.sender_id === loggedInUsername,
+          type: messageData.media ? "image" : "text",
+        };
+
+        setMessages((prev) => [...prev, newMessage]);
+      }
+    });
+
+    // Listen for group updates (new members, name changes, etc.)
+    socket.on("groupUpdated", (groupData: any) => {
+      console.log("Group updated:", groupData);
+      setGroups((prev) =>
+        prev.map((group) =>
+          group.id === groupData.id ? { ...group, ...groupData } : group
+        )
+      );
+    });
+
+    // Cleanup listeners
+    return () => {
+      socket.off("receiveMessage");
+      socket.off("groupUpdated");
+    };
+  }, [socket, selectedRoomId, loggedInUsername]);
+
+  // STEP 3: Fetch messages when selectedRoomId changes
+  useEffect(() => {
+    if (!selectedRoomId) {
+      setMessages([]);
+      return;
+    }
+
+    const token = localStorage.getItem("token");
+    if (!token) {
+      console.error("No token found, redirect to login");
+      return;
+    }
+
+    fetch(
+      `${process.env.NEXT_PUBLIC_API_URL}/rooms/${selectedRoomId}/messages`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    )
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch messages");
+        return res.json();
+      })
+      .then((data: { status: boolean; message: string; data: any[] }) => {
+        // Map API messages to Message interface
+        const mappedMessages: Message[] = data.data.map((msg) => {
+          // Extract sender name safely
+          const senderName =
+            typeof msg.sender === "string"
+              ? msg.sender
+              : msg.sender?.usr_name || msg.sender?.username || "Unknown";
+
+          return {
+            id: msg.id,
+            sender: senderName,
+            content: msg.content,
+            timestamp: msg.timestamp,
+            isOwn: senderName === loggedInUsername,
+            type: msg.type || "text",
+            imageUrl: msg.imageUrl,
+            voiceUrl: msg.voiceUrl,
+            voiceDuration: msg.voiceDuration,
+          };
+        });
+
+        setMessages(mappedMessages);
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+  }, [selectedRoomId, loggedInUsername]);
+
+  // When user selects a group, set the selected group and room ID
+  const onSelectGroup = (group: Group) => {
+    setSelectedGroup(group);
+    setSelectedRoomId(group.id);
+  };
+
+  const filteredGroups = groups.filter((group) =>
+    group.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const handleSendMessage = () => {
-    if (newMessage.trim()) {
-      const message: Message = {
-        id: messages.length + 1,
-        sender: "You",
-        content: newMessage,
-        timestamp: "now",
-        isOwn: true,
-        type: "text",
-      };
-      setMessages([...messages, message]);
-      setNewMessage("");
-    }
+    if (!newMessage.trim() || !selectedRoomId || !socket || !loggedInUsername)
+      return;
+
+    const messageData = {
+      roomId: selectedRoomId,
+      content: newMessage,
+      sender_name: loggedInUsername,
+      timestamp: new Date().toISOString(),
+    };
+
+    socket.emit("sendMessage", messageData);
+    console.log("Message sent via socket:", messageData);
+
+    const optimisticMessage: Message = {
+      id: messages.length + 1,
+      sender: loggedInUsername,
+      content: newMessage,
+      timestamp: "now",
+      isOwn: true,
+      type: "text",
+    };
+
+    setMessages((prev) => [...prev, optimisticMessage]);
+    setNewMessage("");
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -107,13 +227,13 @@ function GroupChat() {
       const imageUrl = URL.createObjectURL(file);
       const message: Message = {
         id: messages.length + 1,
-        sender: "You",
+        sender: loggedInUsername,
         timestamp: "now",
         isOwn: true,
         type: "image",
         imageUrl: imageUrl,
       };
-      setMessages([...messages, message]);
+      setMessages((prev) => [...prev, message]);
     }
   };
 
@@ -132,7 +252,7 @@ function GroupChat() {
         const voiceUrl = URL.createObjectURL(blob);
         const message: Message = {
           id: messages.length + 1,
-          sender: "You",
+          sender: loggedInUsername,
           timestamp: "now",
           isOwn: true,
           type: "voice",
@@ -229,16 +349,59 @@ function GroupChat() {
     }
   };
 
+  // Generate group avatar from group name
+  const getGroupAvatar = (groupName: string) => {
+    const words = groupName.split(" ");
+    if (words.length >= 2) {
+      return words[0].charAt(0) + words[1].charAt(0);
+    }
+    return groupName.substring(0, 2);
+  };
+
+  // Determine if group is "online" based on active members
+  const isGroupOnline = (group: Group) => {
+    return group.members?.some((member) => member.isOnline) || false;
+  };
+
   return (
     <section className="flex h-full">
       {/* Group List */}
       <div className="w-1/3 border-r border-gray-200 flex flex-col">
+        {/* Search Bar */}
+        <div className="p-4 border-b border-gray-200">
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search for Groups"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full px-3 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              {/* search icon */}
+              <svg
+                className="h-5 w-5 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                />
+              </svg>
+            </div>
+          </div>
+        </div>
+
         {/* Group List */}
         <div className="flex-1 overflow-y-auto">
           {filteredGroups.map((group) => (
             <div
               key={group.id}
-              onClick={() => setSelectedGroup(group)}
+              onClick={() => onSelectGroup(group)}
               className={`p-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors ${
                 selectedGroup?.id === group.id
                   ? "bg-blue-50 border-blue-200"
@@ -249,10 +412,10 @@ function GroupChat() {
                 <div className="relative">
                   <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
                     <span className="text-white text-sm font-medium">
-                      {group.avatar}
+                      {getGroupAvatar(group.name).toUpperCase()}
                     </span>
                   </div>
-                  {group.isOnline && (
+                  {isGroupOnline(group) && (
                     <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
                   )}
                 </div>
@@ -264,7 +427,8 @@ function GroupChat() {
                     <p className="text-xs text-gray-500">{group.timestamp}</p>
                   </div>
                   <p className="text-sm text-gray-500 truncate">
-                    {group.lastMessage}
+                    {group.lastMessage ||
+                      `${group.members?.length || 0} members`}
                   </p>
                 </div>
               </div>
@@ -272,6 +436,7 @@ function GroupChat() {
           ))}
         </div>
       </div>
+
       {/* Chat Area */}
       <div className="flex-1 flex flex-col">
         {selectedGroup ? (
@@ -282,10 +447,10 @@ function GroupChat() {
                 <div className="relative">
                   <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
                     <span className="text-white text-sm font-medium">
-                      {selectedGroup.avatar}
+                      {getGroupAvatar(selectedGroup.name).toUpperCase()}
                     </span>
                   </div>
-                  {selectedGroup.isOnline && (
+                  {isGroupOnline(selectedGroup) && (
                     <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
                   )}
                 </div>
@@ -294,7 +459,8 @@ function GroupChat() {
                     {selectedGroup.name}
                   </h3>
                   <p className="text-sm text-gray-500">
-                    {selectedGroup.isOnline ? "Online" : "Offline"}
+                    {selectedGroup.members?.length || 0} members
+                    {isGroupOnline(selectedGroup) && " • Active"}
                   </p>
                 </div>
               </div>
@@ -314,7 +480,7 @@ function GroupChat() {
                       <div className="flex-shrink-0">
                         <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
                           <span className="text-white text-sm font-medium">
-                            {message.sender.charAt(0)}
+                            {message.sender.charAt(0).toUpperCase()}
                           </span>
                         </div>
                       </div>
@@ -384,7 +550,7 @@ function GroupChat() {
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         strokeWidth={2}
-                        d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                        d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 002 2v12a2 2 0 002 2z"
                       />
                     </svg>
                   </button>
@@ -467,6 +633,6 @@ function GroupChat() {
       </div>
     </section>
   );
-}
+};
 
 export default GroupChat;
